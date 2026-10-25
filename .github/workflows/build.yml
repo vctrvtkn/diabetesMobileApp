@@ -56,9 +56,16 @@ jobs:
       - name: Build Android APK
         env:
           APP_ANDROID_ACCEPT_SDK_LICENSE: "1"
+        shell: bash
         run: |
           export PATH="$HOME/.local/bin:$PATH"
-          buildozer -v android debug
+
+          set +e
+          yes | buildozer -v android debug
+          build_status=${PIPESTATUS[1]}
+          set -e
+
+          exit "$build_status"
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
