@@ -29,20 +29,18 @@ jobs:
 
       - name: Install Buildozer
         run: |
-          python3 -m venv ~/buildozer-venv
-          ~/buildozer-venv/bin/pip install --upgrade pip
-          ~/buildozer-venv/bin/pip install \
+          python3 -m pip install --user --upgrade pip
+          python3 -m pip install --user \
             buildozer cython==0.29.34
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
 
       - name: Build Android APK
         env:
           APP_ANDROID_ACCEPT_SDK_LICENSE: "1"
         run: |
-          export PATH="$HOME/buildozer-venv/bin:$PATH"
-          yes | buildozer -v android debug || {
-            status=${PIPESTATUS[1]}
-            exit "$status"
-          }
+          export PATH="$HOME/.local/bin:$PATH"
+          set -o pipefail
+          yes | buildozer -v android debug
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
