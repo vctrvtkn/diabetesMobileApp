@@ -1,5 +1,6 @@
 import json
 import math
+import locale
 from datetime import datetime
 from pathlib import Path
 
@@ -8,12 +9,31 @@ from kivy.app import App
 from kivy.uix.boxlayout import BoxLayout
 from kivy.uix.button import Button
 from kivy.uix.label import Label
-from kivy.uix.screenmanager import ScreenManager, Screen
+from kivy.uix.image import Image
+from kivy.uix.screenmanager import ScreenManager, Screen, SlideTransition
 from kivy.uix.scrollview import ScrollView
 from kivy.uix.textinput import TextInput
 from kivy.uix.widget import Widget
 from kivy.graphics import Color, Rectangle
-from kivy.utils import get_color_from_hex
+from kivy.utils import get_color_from_hex, platform
+from translations import TRANSLATIONS
+
+
+def get_device_language():
+    """Detect device language, defaulting to English."""
+    if platform == 'android':
+        try:
+            from jnius import autoclass
+            Locale = autoclass('java.util.Locale')
+            language = str(Locale.getDefault().getLanguage())
+        except Exception:
+            language = 'en'
+    else:
+        try:
+            language = locale.getlocale()[0] or 'en'
+        except (ValueError, TypeError):
+            language = 'en'
+    return 'ru' if language.lower().startswith('ru') else 'en'
 
 class SwipeScreen(Screen):
     """Горизонтальные свайпы вне полей ввода и прокручиваемых областей."""
@@ -52,6 +72,14 @@ class SwipeScreen(Screen):
             if abs(dx) >= dp(85) and abs(dx) > abs(dy) * 1.5:
                 callback = self.on_swipe_left if dx < 0 else self.on_swipe_right
                 if callback:
+                    manager = self.manager
+
+                    if manager:
+                        manager.transition = SlideTransition(
+                            direction='left' if dx < 0 else 'right',
+                            duration=0.25
+                        )
+
                     callback()
                     return True
         return result
@@ -59,7 +87,13 @@ class SwipeScreen(Screen):
 
 class BreadUnitApp(App):
     def build(self):
-        self.title = 'Калькулятор ХЕ'
+        try:
+            lang = get_device_language()
+            self.lang = lang if lang in ('ru', 'en') else 'en'
+        except Exception:
+            self.lang = 'en'
+        self.tr = TRANSLATIONS[self.lang]
+        self.title = self.tr['window_title']
         self.values = {}
         self.inputs = {}
         self.history_path = Path(self.user_data_dir) / 'history.json'
@@ -74,7 +108,12 @@ class BreadUnitApp(App):
         except (OSError, ValueError):
             self.history = []
 
-        self.manager = ScreenManager()
+        self.manager = ScreenManager(
+            transition=SlideTransition(
+                direction='left',
+                duration=0.25
+            )
+        )
         self.show_home()
         return self.manager
 
@@ -128,28 +167,36 @@ class BreadUnitApp(App):
         layout.add_widget(btn)
 
     def show_home(self):
-        layout = self.screen('home', 'Калькулятор\n хлебных единиц')
+        layout = self.screen('home', self.tr['app_title'])
 
         home_screen = self.manager.get_screen('home')
         home_screen.on_swipe_left = lambda: self.show_step(1)
         home_screen.on_swipe_right = self.show_results
+
+        logo = Image(
+            source=str(Path(__file__).resolve().parent / 'icon.png'),
+            size_hint_y=None,
+            height=dp(230),
+            fit_mode='contain'
+        )
+        layout.add_widget(logo)
         
-        self.button(layout, 'Рассчитать углеводы', lambda: self.show_step(1))
-        self.button(layout, 'Посмотреть результаты', self.show_results)
+        self.button(layout, self.tr['calculate_carbs'], lambda: self.show_step(1))
+        self.button(layout, self.tr['view_results'], self.show_results)
         layout.add_widget(Widget())
 
     def show_step(self, number):
         config = {
-            1: [('emptyTareWeight', 'Вес пустой тары, г *', True)],
+            1: [('emptyTareWeight', self.tr['tare'], True)],
             2: [
-                ('productName', 'Название продукта', False),
-                ('productWeightBeforeCooking', 'Вес продукта до приготовления, г *', True)
+                ('productName', self.tr['product_name'], False),
+                ('productWeightBeforeCooking', self.tr['raw_weight'], True)
             ],
-            3: [('carbohydratesPer100g', 'Углеводы на 100 г *', True)],
-            4: [('finalWeight', 'Вес тары с готовым продуктом, г *', True)],
+            3: [('carbohydratesPer100g', self.tr['carbs_100'], True)],
+            4: [('finalWeight', self.tr['final_weight'], True)],
         }
 
-        layout = self.screen('step', f'Шаг {number} из 4')
+        layout = self.screen('step', self.tr['step'].format(number=number))
         current_screen = self.manager.get_screen('step')
         self.inputs = {}
 
@@ -195,9 +242,9 @@ class BreadUnitApp(App):
                         pass
                     else:
                         error.text = (
-                            'Введите корректное неотрицательное число'
+                            self.tr['invalid_tare']
                             if key == 'emptyTareWeight'
-                            else 'Введите целое число больше нуля'
+                            else self.tr['invalid_positive']
                         )
                         return
 
@@ -206,10 +253,10 @@ class BreadUnitApp(App):
             if number == 4:
                 required_previous = ('emptyTareWeight', 'productWeightBeforeCooking', 'carbohydratesPer100g')
                 if not all(key in self.values for key in required_previous):
-                    error.text = 'Сначала заполните шаги 1–3'
+                    error.text = self.tr['missing_steps']
                     return
                 if self.values['finalWeight'] <= self.values['emptyTareWeight']:
-                    error.text = 'Итоговый вес должен быть больше веса тары'
+                    error.text = self.tr['invalid_final']
                     return
                 self.calculate()
             else:
@@ -220,21 +267,17 @@ class BreadUnitApp(App):
             lambda: self.show_home() if number == 1 else self.show_step(number - 1)
         )
 
-        self.button(layout, 'Далее' if number < 4 else 'Рассчитать', next_step)
+        self.button(layout, self.tr['next'] if number < 4 else self.tr['calculate'], next_step)
         self.button(
             layout,
-            'Назад',
+            self.tr['back'],
             lambda: self.show_home() if number == 1 else self.show_step(number - 1)
         )
         layout.add_widget(Widget())
 
-    def save_history(self, message):
+    def save_history(self, data):
         timestamp = datetime.now().astimezone().strftime('%d.%m.%Y %H:%M')
-        self.history.insert(0, {
-            'timestamp': timestamp,
-            'text': message
-        })
-
+        self.history.insert(0, {'timestamp': timestamp, **data})
         try:
             self.history_path.write_text(
                 json.dumps(self.history, ensure_ascii=False, indent=2),
@@ -243,21 +286,23 @@ class BreadUnitApp(App):
         except OSError:
             pass
 
+    def format_result(self, name, grams):
+        name = str(name).strip() or self.tr['unnamed']
+        return self.tr['result_one'].format(name=name, grams=grams)
+
     def calculate(self):
         v = self.values
         cooked_weight = v['finalWeight'] - v['emptyTareWeight']
         carbs = v['productWeightBeforeCooking'] * v['carbohydratesPer100g'] / 100
-
         self.exact_grams_per_xe = cooked_weight * 10 / carbs
         grams = math.ceil(self.exact_grams_per_xe)
-        name = v.get('productName', '').strip() or 'Без названия'
-
-        self.current_result = f'1 ХЕ готового продукта «{name}» равна {grams} г.'
-        self.save_history(self.current_result)
+        name = v.get('productName', '').strip()
+        self.current_result = self.format_result(name, grams)
+        self.save_history({'name': name, 'grams_per_xe': grams})
         self.show_results()
 
     def show_results(self):
-        layout = self.screen('results', 'Результаты')
+        layout = self.screen('results', self.tr['results'])
         results_screen = self.manager.get_screen('results')
         results_screen.on_swipe_left = self.show_home
         results_screen.on_swipe_right = lambda: self.show_step(4)
@@ -275,7 +320,7 @@ class BreadUnitApp(App):
             layout.add_widget(result_label)
 
             question = Label(
-                text='Сколько нужно хлебных единиц?',
+                text=self.tr['question'],
                 size_hint_y=None,
                 height=dp(52),
                 font_size=sp(21),
@@ -310,15 +355,15 @@ class BreadUnitApp(App):
             def recalc(*_):
                 if count.text and int(count.text) > 0:
                     n = int(count.text)
-                    answer.text = f'{n} ХЕ — это {math.ceil(self.exact_grams_per_xe * n)} г.'
+                    answer.text = self.tr['result_count'].format(count=n, grams=math.ceil(self.exact_grams_per_xe * n))
                 else:
-                    answer.text = 'Введите целое число больше нуля'
+                    answer.text = self.tr['invalid_positive']
 
             count.bind(text=recalc)
             recalc()
         else:
             layout.add_widget(Label(
-                text='Текущий расчёт отсутствует',
+                text=self.tr['no_current'],
                 size_hint_y=None,
                 height=dp(60),
                 font_size=sp(20)
@@ -328,7 +373,7 @@ class BreadUnitApp(App):
         layout.add_widget(Widget(size_hint_y=None, height=dp(22)))
 
         history_heading = Label(
-            text='Предыдущие результаты:',
+            text=self.tr['previous'],
             size_hint_y=None,
             height=dp(48),
             font_size=sp(22),
@@ -350,7 +395,7 @@ class BreadUnitApp(App):
 
         if not self.history:
             content.add_widget(Label(
-                text='История пока пуста',
+                text=self.tr['empty_history'],
                 size_hint_y=None,
                 height=dp(60),
                 font_size=sp(18)
@@ -360,7 +405,10 @@ class BreadUnitApp(App):
                 # Поддерживаем старые записи, сохранённые просто строками.
                 if isinstance(item, dict):
                     timestamp = str(item.get('timestamp', '')).strip()
-                    message = str(item.get('text', ''))
+                    if 'grams_per_xe' in item:
+                        message = self.format_result(item.get('name', ''), item['grams_per_xe'])
+                    else:
+                        message = str(item.get('text', ''))  # Legacy entry
                     text = f'{timestamp}\n{message}' if timestamp else message
                 else:
                     text = str(item)
@@ -382,7 +430,7 @@ class BreadUnitApp(App):
 
         scroll.add_widget(content)
         layout.add_widget(scroll)
-        self.button(layout, 'На главную', self.show_home)
+        self.button(layout, self.tr['home'], self.show_home)
 
 
 if __name__ == '__main__':
