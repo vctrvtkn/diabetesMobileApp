@@ -19,7 +19,7 @@ fullscreen = 0
 android.archs = arm64-v8a
 android.api = 35
 android.minapi = 28
-
+android.add_resources = res/values-en/strings.xml:values-en/strings.xml
 
 [buildozer]
 log_level = 2
