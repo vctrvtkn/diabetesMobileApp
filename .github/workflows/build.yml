@@ -53,6 +53,21 @@ jobs:
           restore-keys: |
             android-${{ runner.os }}-
 
+      - name: Restore persistent Android debug signing key
+        env:
+          ANDROID_DEBUG_KEYSTORE_BASE64: ${{ secrets.ANDROID_DEBUG_KEYSTORE_BASE64 }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "$ANDROID_DEBUG_KEYSTORE_BASE64" ]]; then
+            echo "Missing GitHub secret ANDROID_DEBUG_KEYSTORE_BASE64" >&2
+            exit 1
+          fi
+          mkdir -p "$HOME/.android"
+          printf '%s' "$ANDROID_DEBUG_KEYSTORE_BASE64" | base64 --decode > "$HOME/.android/debug.keystore"
+          chmod 600 "$HOME/.android/debug.keystore"
+          keytool -list -keystore "$HOME/.android/debug.keystore" -storepass android -alias androiddebugkey > /dev/null
+
       - name: Build Android APK
         env:
           APP_ANDROID_ACCEPT_SDK_LICENSE: "1"
