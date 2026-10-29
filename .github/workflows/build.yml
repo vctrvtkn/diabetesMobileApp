@@ -101,21 +101,19 @@ jobs:
 
           test -f "$HOME/.android/debug.keystore"
 
-          # Указываем Gradle постоянное расположение ключа.
           mkdir -p "$HOME/.gradle"
+
           cat > "$HOME/.gradle/init.gradle" <<'GRADLE'
-          gradle.projectsEvaluated {
-              allprojects { project ->
-                  if (project.hasProperty('android')) {
-                      def android = project.android
-                      if (android.signingConfigs.findByName('debug') != null) {
-                          android.signingConfigs.debug.storeFile =
-                              new File(System.getProperty('user.home'), '.android/debug.keystore')
-                          android.signingConfigs.debug.storePassword = 'android'
-                          android.signingConfigs.debug.keyAlias = 'androiddebugkey'
-                          android.signingConfigs.debug.keyPassword = 'android'
-                      }
-                  }
+          gradle.beforeProject { project ->
+              project.pluginManager.withPlugin('com.android.application') {
+                  def android = project.extensions.getByName('android')
+                  def debugSigning = android.signingConfigs.getByName('debug')
+
+                  debugSigning.storeFile =
+                      new File(System.getProperty('user.home'), '.android/debug.keystore')
+                  debugSigning.storePassword = 'android'
+                  debugSigning.keyAlias = 'androiddebugkey'
+                  debugSigning.keyPassword = 'android'
               }
           }
           GRADLE
