@@ -4,43 +4,170 @@ on:
   workflow_dispatch:
     inputs:
       run_id:
-        description: "ID успешной сборки APK"
-        required: true
-        type: string
-      version:
-        description: "Версия приложения, например 0.1.3"
+        description: "Run ID успешной сборки Build Android APK"
         required: true
         type: string
 
 permissions:
-  contents: write
   actions: read
+  contents: write
 
 jobs:
   release:
     runs-on: ubuntu-22.04
 
     steps:
-      - name: Download APK from build
-        uses: actions/download-artifact@v4
-        with:
-          run-id: ${{ inputs.run_id }}
-          name: xe-calculator-v${{ inputs.version }}
-          path: release
-          github-token: ${{ github.token }}
-
-      - name: Publish GitHub Release
+      - name: Validate build and identify artifact
+        id: artifact
         env:
           GH_TOKEN: ${{ github.token }}
-          VERSION: ${{ inputs.version }}
+          RUN_ID: ${{ inputs.run_id }}
         shell: bash
         run: |
           set -euo pipefail
 
-          APK=$(find release -type f -name '*.apk' -print -quit)
-          test -n "$APK"
+          [[ "$RUN_ID" =~ ^[0-9]+$ ]] || {
+            echo "run_id must be numeric" >&2
+            exit 1
+          }
 
-          gh release create "v${VERSION}" "$APK" \
+          RUN_INFO=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID")
+          RUN_NAME=$(jq -r '.name' <<< "$RUN_INFO")
+          RUN_STATUS=$(jq -r '.status' <<< "$RUN_INFO")
+          RUN_CONCLUSION=$(jq -r '.conclusion' <<< "$RUN_INFO")
+          HEAD_SHA=$(jq -r '.head_sha' <<< "$RUN_INFO")
+
+          [[ "$RUN_NAME" == "Build Android APK" &&
+             "$RUN_STATUS" == "completed" &&
+             "$RUN_CONCLUSION" == "success" ]] || {
+            echo "The specified run is not a successful Build Android APK run" >&2
+            exit 1
+          }
+
+          ARTIFACTS=$(gh api --paginate \
+            "repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID/artifacts" \
+            --jq '.artifacts[] | select(.expired == false) | .name')
+
+          mapfile -t MATCHES < <(
+            printf '%s\n' "$ARTIFACTS" |
+              grep -E '^xe-calculator-v[0-9]+\.[0-9]+\.[0-9]+$' || true
+          )
+
+          [[ ${#MATCHES[@]} -eq 1 ]] || {
+            echo "Expected exactly one unexpired xe-calculator-vX.Y.Z artifact" >&2
+            exit 1
+          }
+
+          ARTIFACT_NAME="${MATCHES[0]}"
+          VERSION="${ARTIFACT_NAME#xe-calculator-v}"
+
+          echo "name=$ARTIFACT_NAME" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "head_sha=$HEAD_SHA" >> "$GITHUB_OUTPUT"
+          echo "Selected: $ARTIFACT_NAME, commit: $HEAD_SHA"
+
+      - name: Download APK from selected build
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ inputs.run_id }}
+          ARTIFACT_NAME: ${{ steps.artifact.outputs.name }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p release
+          gh run download "$RUN_ID" \
             --repo "$GITHUB_REPOSITORY" \
-            --title "XE Calculator v${VERSION}" \
-            --notes "Android APK"
+            --name "$ARTIFACT_NAME" \
+            --dir release
+
+      - name: Setup Android SDK tools
+        uses: android-actions/setup-android@v3
+
+      - name: Install APK verification tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          sdkmanager "build-tools;35.0.0"
+
+      - name: Verify APK version, package and signing certificate
+        env:
+          ANDROID_DEBUG_KEYSTORE_BASE64: ${{ secrets.ANDROID_DEBUG_KEYSTORE_BASE64 }}
+          VERSION: ${{ steps.artifact.outputs.version }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          mapfile -t APKS < <(find release -type f -name '*.apk')
+          [[ ${#APKS[@]} -eq 1 ]] || {
+            echo "Expected exactly one APK" >&2
+            exit 1
+          }
+          APK="${APKS[0]}"
+
+          AAPT="$ANDROID_HOME/build-tools/35.0.0/aapt"
+          APKSIGNER="$ANDROID_HOME/build-tools/35.0.0/apksigner"
+
+          BADGING=$("$AAPT" dump badging "$APK")
+          PACKAGE_LINE=$(grep '^package:' <<< "$BADGING")
+          echo "$PACKAGE_LINE"
+
+          [[ "$PACKAGE_LINE" == *"name='org.example.xecalculator'"* ]] || {
+            echo "Unexpected Android package name" >&2
+            exit 1
+          }
+          [[ "$PACKAGE_LINE" == *"versionName='$VERSION'"* ]] || {
+            echo "APK versionName differs from artifact version $VERSION" >&2
+            exit 1
+          }
+
+          [[ -n "$ANDROID_DEBUG_KEYSTORE_BASE64" ]] || {
+            echo "Missing ANDROID_DEBUG_KEYSTORE_BASE64 secret" >&2
+            exit 1
+          }
+          mkdir -p "$HOME/.android"
+          printf '%s' "$ANDROID_DEBUG_KEYSTORE_BASE64" |
+            base64 --decode > "$HOME/.android/debug.keystore"
+          chmod 600 "$HOME/.android/debug.keystore"
+
+          EXPECTED=$(keytool -list -v \
+            -keystore "$HOME/.android/debug.keystore" \
+            -storepass android -alias androiddebugkey |
+            sed -n 's/^[[:space:]]*SHA256: //p' |
+            head -n 1 | tr -d ':' | tr '[:lower:]' '[:upper:]')
+
+          "$APKSIGNER" verify --print-certs "$APK"
+          ACTUAL=$("$APKSIGNER" verify --print-certs "$APK" |
+            sed -nE 's/^[[:space:]]*(V[0-9]+ Signer|Signer #[0-9]+):? certificate SHA-256 digest:[[:space:]]*//p' |
+            head -n 1 | tr -d '[:space:]:' | tr '[:lower:]' '[:upper:]')
+
+          echo "Expected: $EXPECTED"
+          echo "Actual:   $ACTUAL"
+
+          [[ -n "$EXPECTED" && -n "$ACTUAL" && "$EXPECTED" == "$ACTUAL" ]] || {
+            echo "APK signing certificate mismatch" >&2
+            exit 1
+          }
+
+          echo "APK version, package and signing certificate verified."
+
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.artifact.outputs.version }}
+          HEAD_SHA: ${{ steps.artifact.outputs.head_sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          TAG="v$VERSION"
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "Release $TAG already exists; refusing to overwrite it." >&2
+            exit 1
+          fi
+
+          APK=$(find release -type f -name '*.apk' -print -quit)
+          gh release create "$TAG" "$APK" \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$HEAD_SHA" \
+            --title "XE Calculator $TAG" \
+            --notes "Android APK. Version $VERSION."
