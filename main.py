@@ -17,7 +17,7 @@ from kivy.uix.widget import Widget
 from kivy.graphics import Color, Rectangle
 from kivy.utils import get_color_from_hex, platform
 from translations import TRANSLATIONS
-
+__version__ = '0.1.3'
 
 def get_device_language():
     """Detect device language, defaulting to English."""
