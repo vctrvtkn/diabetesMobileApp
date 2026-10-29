@@ -87,11 +87,15 @@ class SwipeScreen(Screen):
 
 class BreadUnitApp(App):
     def build(self):
+        # Use the saved language if selected; otherwise use device locale.
+        self.settings_path = Path(self.user_data_dir) / 'settings.json'
         try:
-            lang = get_device_language()
-            self.lang = lang if lang in ('ru', 'en') else 'en'
-        except Exception:
-            self.lang = 'en'
+            settings = json.loads(self.settings_path.read_text(encoding='utf-8'))
+            saved_lang = settings.get('language') if isinstance(settings, dict) else None
+        except (OSError, ValueError):
+            saved_lang = None
+
+        self.lang = saved_lang if saved_lang in ('ru', 'en') else get_device_language()
         self.tr = TRANSLATIONS[self.lang]
         self.title = self.tr['window_title']
         self.values = {}
@@ -184,6 +188,50 @@ class BreadUnitApp(App):
         self.button(layout, self.tr['calculate_carbs'], lambda: self.show_step(1))
         self.button(layout, self.tr['view_results'], self.show_results)
         layout.add_widget(Widget())
+
+        # Language switcher anchored to the bottom of the home screen.
+        language_row = BoxLayout(
+            orientation='horizontal',
+            size_hint_y=None,
+            height=dp(48),
+            spacing=dp(10)
+        )
+        for language, caption in (('en', 'EN'), ('ru', 'RU')):
+            active = language == self.lang
+            btn = Button(
+                text=caption,
+                font_size=sp(18),
+                bold=active,
+                background_normal='',
+                background_color=(0.34, 0.34, 0.34, 1) if active else (0.17, 0.17, 0.17, 1),
+                color=(1, 1, 1, 1) if active else (0.72, 0.72, 0.72, 1)
+            )
+            btn.bind(on_release=lambda _, lang=language: self.set_language(lang))
+            language_row.add_widget(btn)
+        layout.add_widget(language_row)
+
+    def set_language(self, language):
+        if language not in TRANSLATIONS or language == self.lang:
+            return
+
+        self.lang = language
+        self.tr = TRANSLATIONS[language]
+        self.title = self.tr['window_title']
+        try:
+            self.settings_path.write_text(
+                json.dumps({'language': language}, ensure_ascii=False),
+                encoding='utf-8'
+            )
+        except OSError:
+            pass
+
+        if hasattr(self, 'exact_grams_per_xe'):
+            self.current_result = self.format_result(
+                self.values.get('productName', ''),
+                math.ceil(self.exact_grams_per_xe)
+            )
+
+        self.show_home()
 
     def show_step(self, number):
         config = {
