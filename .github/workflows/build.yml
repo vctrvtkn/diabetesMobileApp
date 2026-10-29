@@ -1,10 +1,9 @@
-
 name: Build Android APK
 
 on:
   workflow_dispatch:
   # push:
-  #  branches: [main, master]
+  #   branches: [main, master]
 
 jobs:
   build:
@@ -14,6 +13,30 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+
+      - name: Get app version
+        id: app_version
+        shell: bash
+        run: |
+          VERSION=$(python3 - <<'PY'
+          import ast
+          from pathlib import Path
+
+          tree = ast.parse(Path('main.py').read_text(encoding='utf-8'))
+          for node in tree.body:
+              if isinstance(node, ast.Assign):
+                  if any(isinstance(t, ast.Name) and t.id == '__version__' for t in node.targets):
+                      version = ast.literal_eval(node.value)
+                      if not isinstance(version, str) or not version:
+                          raise SystemExit('Invalid __version__ in main.py')
+                      print(version)
+                      break
+          else:
+              raise SystemExit('App version not found in main.py')
+          PY
+          )
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "App version: $VERSION"
 
       - name: Install system dependencies
         run: |
@@ -85,7 +108,7 @@ jobs:
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: xe-calculator-apk
+          name: xe-calculator-v${{ steps.app_version.outputs.version }}
           path: bin/*.apk
           if-no-files-found: error
           retention-days: 30
