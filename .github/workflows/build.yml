@@ -96,13 +96,29 @@ jobs:
           APP_ANDROID_ACCEPT_SDK_LICENSE: "1"
         shell: bash
         run: |
+          set -euo pipefail
           export PATH="$HOME/.local/bin:$PATH"
 
-          # Проверяем постоянный ключ
           test -f "$HOME/.android/debug.keystore"
 
-          # Удаляем потенциально сохранённые настройки подписи Gradle
-          rm -rf .buildozer/android/platform/build-*/dists/*/build
+          # Указываем Gradle постоянное расположение ключа.
+          mkdir -p "$HOME/.gradle"
+          cat > "$HOME/.gradle/init.gradle" <<'GRADLE'
+          gradle.projectsEvaluated {
+              allprojects { project ->
+                  if (project.hasProperty('android')) {
+                      def android = project.android
+                      if (android.signingConfigs.findByName('debug') != null) {
+                          android.signingConfigs.debug.storeFile =
+                              new File(System.getProperty('user.home'), '.android/debug.keystore')
+                          android.signingConfigs.debug.storePassword = 'android'
+                          android.signingConfigs.debug.keyAlias = 'androiddebugkey'
+                          android.signingConfigs.debug.keyPassword = 'android'
+                      }
+                  }
+              }
+          }
+          GRADLE
 
           set +e
           yes | buildozer -v android debug
@@ -110,6 +126,7 @@ jobs:
           set -e
 
           exit "$build_status"
+          
       - name: Find unsigned APK
         shell: bash
         run: |
