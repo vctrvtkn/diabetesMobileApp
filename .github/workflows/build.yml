@@ -124,9 +124,14 @@ jobs:
             sed -n 's/^[[:space:]]*SHA256: //p' |
             head -n 1 | tr -d ':' | tr '[:lower:]' '[:upper:]')
 
+          echo "=== APK SIGNATURE DETAILS ==="
+          "$APKSIGNER" verify --print-certs "$APK"
+          
           ACTUAL=$("$APKSIGNER" verify --print-certs "$APK" |
-            sed -n 's/^Signer #1 certificate SHA-256 digest: //p' |
-            head -n 1 | tr -d ':' | tr '[:lower:]' '[:upper:]')
+            sed -nE 's/^[[:space:]]*Signer #[0-9]+ certificate SHA-256 digest:[[:space:]]*//p' |
+            head -n 1 |
+            tr -d '[:space:]:' |
+            tr '[:lower:]' '[:upper:]')
 
           echo "Expected certificate: $EXPECTED"
           echo "Actual certificate:   $ACTUAL"
