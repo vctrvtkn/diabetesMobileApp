@@ -110,7 +110,13 @@ jobs:
           set -e
 
           exit "$build_status"
-      
+      - name: Find unsigned APK
+        shell: bash
+        run: |
+          echo "=== GRADLE APK FILES ==="
+          find .buildozer -type f \
+            \( -name '*unsigned*.apk' -o -name '*unaligned*.apk' \) \
+            -print      
       - name: Verify APK signing certificate
         shell: bash
         run: |
