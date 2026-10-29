@@ -1,0 +1,42 @@
+name: Create Android debug signing key (one time)
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  generate:
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Generate Android debug signing key
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/android-signing"
+          keytool -genkeypair -noprompt \
+            -keystore "$RUNNER_TEMP/android-signing/debug.keystore" \
+            -storetype PKCS12 \
+            -storepass android \
+            -keypass android \
+            -alias androiddebugkey \
+            -keyalg RSA -keysize 2048 -validity 10000 \
+            -dname "CN=Android Debug,O=Android,C=US"
+          keytool -list \
+            -keystore "$RUNNER_TEMP/android-signing/debug.keystore" \
+            -storepass android -alias androiddebugkey >/dev/null
+
+      - name: Download key as an artifact (keep private!)
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-debug-signing-key-KEEP-PRIVATE
+          path: ${{ runner.temp }}/android-signing/debug.keystore
+          if-no-files-found: error
+          retention-days: 1
