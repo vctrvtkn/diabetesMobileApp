@@ -3,6 +3,7 @@ import math
 from datetime import datetime
 from pathlib import Path
 
+from kivy.metrics import dp, sp
 from kivy.app import App
 from kivy.uix.boxlayout import BoxLayout
 from kivy.uix.button import Button
@@ -11,6 +12,49 @@ from kivy.uix.screenmanager import ScreenManager, Screen
 from kivy.uix.scrollview import ScrollView
 from kivy.uix.textinput import TextInput
 from kivy.uix.widget import Widget
+from kivy.graphics import Color, Rectangle
+from kivy.utils import get_color_from_hex
+
+class SwipeScreen(Screen):
+    """Горизонтальные свайпы вне полей ввода и прокручиваемых областей."""
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.on_swipe_left = None
+        self.on_swipe_right = None
+        self._swipe_start = None
+        self._swipe_touch = None
+
+    def _interactive_area(self, x, y):
+        for widget in self.walk():
+            if isinstance(widget, (TextInput, ScrollView)):
+                if widget.collide_point(x, y):
+                    return True
+        return False
+
+    def on_touch_down(self, touch):
+        if self.collide_point(*touch.pos) and not self._interactive_area(*touch.pos):
+            self._swipe_start = tuple(touch.pos)
+            self._swipe_touch = touch
+        else:
+            self._swipe_start = None
+            self._swipe_touch = None
+        return super().on_touch_down(touch)
+
+    def on_touch_up(self, touch):
+        start = self._swipe_start if touch is self._swipe_touch else None
+        self._swipe_start = None
+        self._swipe_touch = None
+        result = super().on_touch_up(touch)
+        if start is not None:
+            dx = touch.x - start[0]
+            dy = touch.y - start[1]
+            if abs(dx) >= dp(85) and abs(dx) > abs(dy) * 1.5:
+                callback = self.on_swipe_left if dx < 0 else self.on_swipe_right
+                if callback:
+                    callback()
+                    return True
+        return result
 
 
 class BreadUnitApp(App):
@@ -38,40 +82,58 @@ class BreadUnitApp(App):
         if self.manager.has_screen(name):
             self.manager.remove_widget(self.manager.get_screen(name))
 
-        screen = Screen(name=name)
+        screen = SwipeScreen(name=name)
+
+        # Цвет фона экрана
+        with screen.canvas.before:
+            Color(*get_color_from_hex('#1e1e1e'))  # RGBA
+            background = Rectangle(pos=screen.pos, size=screen.size)
+
+        # Фон подстраивается под размер экрана
+        screen.bind(
+            pos=lambda instance, value: setattr(background, 'pos', value),
+            size=lambda instance, value: setattr(background, 'size', value)
+        )
+
         layout = BoxLayout(
             orientation='vertical',
-            padding=[22, 20, 22, 20],
-            spacing=14
+            padding=[dp(22), dp(20), dp(22), dp(20)],
+            spacing=dp(14)
         )
 
         heading = Label(
             text=title,
-            font_size='27sp',
+            font_size=sp(27),
             size_hint_y=None,
-            height=76,
+            height=dp(76),
             halign='center',
             valign='middle'
         )
-        layout.add_widget(heading)
 
+        layout.add_widget(heading)
         screen.add_widget(layout)
         self.manager.add_widget(screen)
         self.manager.current = name
+
         return layout
 
     def button(self, layout, caption, action):
         btn = Button(
             text=caption,
             size_hint_y=None,
-            height=72,
-            font_size='23sp'
+            height=dp(78),
+            font_size=sp(23)
         )
         btn.bind(on_release=lambda *_: action())
         layout.add_widget(btn)
 
     def show_home(self):
-        layout = self.screen('home', 'Калькулятор хлебных единиц')
+        layout = self.screen('home', 'Калькулятор\n хлебных единиц')
+
+        home_screen = self.manager.get_screen('home')
+        home_screen.on_swipe_left = lambda: self.show_step(1)
+        home_screen.on_swipe_right = self.show_results
+        
         self.button(layout, 'Рассчитать углеводы', lambda: self.show_step(1))
         self.button(layout, 'Посмотреть результаты', self.show_results)
         layout.add_widget(Widget())
@@ -88,14 +150,15 @@ class BreadUnitApp(App):
         }
 
         layout = self.screen('step', f'Шаг {number} из 4')
+        current_screen = self.manager.get_screen('step')
         self.inputs = {}
 
         for key, label_text, numeric in config[number]:
             field_label = Label(
                 text=label_text,
                 size_hint_y=None,
-                height=52,
-                font_size='22sp',
+                height=dp(52),
+                font_size=sp(22),
                 halign='left',
                 valign='middle'
             )
@@ -107,9 +170,9 @@ class BreadUnitApp(App):
                 multiline=False,
                 input_filter='int' if numeric else None,
                 size_hint_y=None,
-                height=68,
-                font_size='24sp',
-                padding=[12, 14, 12, 14]
+                height=dp(76),
+                font_size=sp(24),
+                padding=[dp(12), dp(10), dp(12), dp(10)]
             )
             self.inputs[key] = field
             layout.add_widget(field)
@@ -118,8 +181,8 @@ class BreadUnitApp(App):
             text='',
             color=(1, 0.35, 0.35, 1),
             size_hint_y=None,
-            height=60,
-            font_size='18sp'
+            height=dp(60),
+            font_size=sp(18)
         )
         layout.add_widget(error)
 
@@ -141,12 +204,21 @@ class BreadUnitApp(App):
                 self.values[key] = int(value) if numeric else value
 
             if number == 4:
+                required_previous = ('emptyTareWeight', 'productWeightBeforeCooking', 'carbohydratesPer100g')
+                if not all(key in self.values for key in required_previous):
+                    error.text = 'Сначала заполните шаги 1–3'
+                    return
                 if self.values['finalWeight'] <= self.values['emptyTareWeight']:
                     error.text = 'Итоговый вес должен быть больше веса тары'
                     return
                 self.calculate()
             else:
                 self.show_step(number + 1)
+
+        current_screen.on_swipe_left = next_step
+        current_screen.on_swipe_right = (
+            lambda: self.show_home() if number == 1 else self.show_step(number - 1)
+        )
 
         self.button(layout, 'Далее' if number < 4 else 'Рассчитать', next_step)
         self.button(
@@ -186,13 +258,16 @@ class BreadUnitApp(App):
 
     def show_results(self):
         layout = self.screen('results', 'Результаты')
+        results_screen = self.manager.get_screen('results')
+        results_screen.on_swipe_left = self.show_home
+        results_screen.on_swipe_right = lambda: self.show_step(4)
 
         if hasattr(self, 'current_result'):
             result_label = Label(
                 text=self.current_result,
                 size_hint_y=None,
-                height=82,
-                font_size='21sp',
+                height=dp(82),
+                font_size=sp(21),
                 halign='left',
                 valign='middle'
             )
@@ -202,8 +277,8 @@ class BreadUnitApp(App):
             question = Label(
                 text='Сколько нужно хлебных единиц?',
                 size_hint_y=None,
-                height=52,
-                font_size='21sp',
+                height=dp(52),
+                font_size=sp(21),
                 halign='left',
                 valign='middle'
             )
@@ -215,17 +290,17 @@ class BreadUnitApp(App):
                 input_filter='int',
                 multiline=False,
                 size_hint_y=None,
-                height=68,
-                font_size='24sp',
-                padding=[12, 14, 12, 14]
+                height=dp(76),
+                font_size=sp(24),
+                padding=[dp(12), dp(10), dp(12), dp(10)]
             )
             layout.add_widget(count)
 
             answer = Label(
                 text='',
                 size_hint_y=None,
-                height=68,
-                font_size='23sp',
+                height=dp(68),
+                font_size=sp(23),
                 halign='left',
                 valign='middle'
             )
@@ -245,18 +320,18 @@ class BreadUnitApp(App):
             layout.add_widget(Label(
                 text='Текущий расчёт отсутствует',
                 size_hint_y=None,
-                height=60,
-                font_size='20sp'
+                height=dp(60),
+                font_size=sp(20)
             ))
 
         # Небольшой отступ, чтобы отделить историю от текущего расчёта.
-        layout.add_widget(Widget(size_hint_y=None, height=22))
+        layout.add_widget(Widget(size_hint_y=None, height=dp(22)))
 
         history_heading = Label(
             text='Предыдущие результаты:',
             size_hint_y=None,
-            height=48,
-            font_size='22sp',
+            height=dp(48),
+            font_size=sp(22),
             halign='left',
             valign='middle'
         )
@@ -269,7 +344,7 @@ class BreadUnitApp(App):
         content = BoxLayout(
             orientation='vertical',
             size_hint_y=None,
-            spacing=10
+            spacing=dp(10)
         )
         content.bind(minimum_height=content.setter('height'))
 
@@ -277,8 +352,8 @@ class BreadUnitApp(App):
             content.add_widget(Label(
                 text='История пока пуста',
                 size_hint_y=None,
-                height=60,
-                font_size='18sp'
+                height=dp(60),
+                font_size=sp(18)
             ))
         else:
             for item in self.history:
@@ -293,8 +368,8 @@ class BreadUnitApp(App):
                 history_label = Label(
                     text=text,
                     size_hint_y=None,
-                    height=94,
-                    font_size='18sp',
+                    height=dp(94),
+                    font_size=sp(18),
                     halign='left',
                     valign='middle'
                 )
