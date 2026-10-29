@@ -8,7 +8,9 @@ source.include_exts = py,png,jpg,kv,atlas,json
 
 icon.filename = %(source.dir)s/icon.png
 
-version = 0.1.2
+# version = 0.1.2
+version.regex = __version__ = ['"](.*)['"]
+version.filename = %(source.dir)s/main.py
 requirements = python3,kivy,pyjnius
 
 orientation = portrait
