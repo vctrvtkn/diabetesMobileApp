@@ -79,21 +79,24 @@ jobs:
             --repo "$GITHUB_REPOSITORY" \
             --name "$ARTIFACT_NAME" \
             --dir release
-      
+
       - name: Setup Java 17
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '17'
-          
-      - name: Setup Android SDK tools
-        uses: android-actions/setup-android@v3
 
       - name: Install APK verification tools
         shell: bash
         run: |
           set -euo pipefail
-          sdkmanager "build-tools;35.0.0"
+          SDK_ROOT="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"
+          SDKMANAGER="$SDK_ROOT/cmdline-tools/latest/bin/sdkmanager"
+          test -x "$SDKMANAGER"
+          yes | "$SDKMANAGER" --sdk_root="$SDK_ROOT" "build-tools;35.0.0" || {
+            status=${PIPESTATUS[1]}
+            exit "$status"
+          }
 
       - name: Verify APK version, package and signing certificate
         env:
@@ -110,8 +113,9 @@ jobs:
           }
           APK="${APKS[0]}"
 
-          AAPT="$ANDROID_HOME/build-tools/35.0.0/aapt"
-          APKSIGNER="$ANDROID_HOME/build-tools/35.0.0/apksigner"
+          SDK_ROOT="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"
+          AAPT="$SDK_ROOT/build-tools/35.0.0/aapt"
+          APKSIGNER="$SDK_ROOT/build-tools/35.0.0/apksigner"
 
           BADGING=$("$AAPT" dump badging "$APK")
           PACKAGE_LINE=$(grep '^package:' <<< "$BADGING")
