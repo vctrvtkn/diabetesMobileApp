@@ -98,6 +98,12 @@ jobs:
         run: |
           export PATH="$HOME/.local/bin:$PATH"
 
+          # Проверяем постоянный ключ
+          test -f "$HOME/.android/debug.keystore"
+
+          # Удаляем потенциально сохранённые настройки подписи Gradle
+          rm -rf .buildozer/android/platform/build-*/dists/*/build
+
           set +e
           yes | buildozer -v android debug
           build_status=${PIPESTATUS[1]}
@@ -128,7 +134,7 @@ jobs:
           "$APKSIGNER" verify --print-certs "$APK"
           
           ACTUAL=$("$APKSIGNER" verify --print-certs "$APK" |
-            sed -nE 's/^[[:space:]]*Signer #[0-9]+ certificate SHA-256 digest:[[:space:]]*//p' |
+            sed -nE 's/^[[:space:]]*(V[0-9]+ Signer|Signer #[0-9]+):? certificate SHA-256 digest:[[:space:]]*//p' |
             head -n 1 |
             tr -d '[:space:]:' |
             tr '[:lower:]' '[:upper:]')
